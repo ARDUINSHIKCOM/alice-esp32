@@ -4,16 +4,11 @@ import requests
 
 app = Flask(__name__)
 
-# ===== TELEGRAM =====
+# ===== НАСТРОЙКИ =====
 BOT_TOKEN = "8934033344:AAG1ugT8wbAHI7nawdeDgtcYuMPmcOHbxdA"
-CHAT_ID = "7018112801"
 
-def send_telegram(text):
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": CHAT_ID, "text": text}, timeout=5)
-    except Exception as e:
-        print("Telegram error:", e)
+# Универсальный Chat ID (обновляется автоматически)
+CHAT_ID = None
 
 # ===== ХРАНИЛИЩЕ =====
 state = {
@@ -35,13 +30,24 @@ def add_log(event_type, value):
     if len(log) > MAX_LOG:
         log.pop(0)
 
+def send_telegram(text):
+    global CHAT_ID
+    if CHAT_ID is None:
+        print("Chat ID не установлен. Напиши /start боту.")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": CHAT_ID, "text": text}, timeout=5)
+    except Exception as e:
+        print("Telegram error:", e)
+
+# ===== ESP32 =====
 @app.route('/esp32/set', methods=['POST'])
 def esp32_set():
     data = request.json
     for k in ["gas","gas_d","water","sound","temp","hum","distance"]:
         if k in data: state[k] = data[k]
     
-    # Проверка событий и отправка в Telegram
     if data.get("gas", 0) > 2000:
         add_log("Утечка газа", data["gas"])
         send_telegram(f"⚠️ УТЕЧКА ГАЗА! Уровень: {data['gas']}")
@@ -73,6 +79,7 @@ def esp32_get():
         "guard": state["guard"]
     })
 
+# ===== АЛИСА =====
 @app.route('/alice', methods=['POST'])
 def alice():
     data = request.json
@@ -142,6 +149,47 @@ def alice():
         "version": "1.0"
     })
 
+# ===== TELEGRAM WEBHOOK =====
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    global CHAT_ID
+    update = request.get_json()
+    if update and "message" in update:
+        chat_id = str(update["message"]["chat"]["id"])
+        text = update["message"].get("text", "").lower()
+        
+        # Универсальный Chat ID: сохраняем, кто написал
+        CHAT_ID = chat_id
+        print(f"Chat ID установлен: {CHAT_ID}")
+        
+        if text == "/start" or text == "помощь":
+            send_telegram("Привет! Я бот умного дома.\n\nДоступные команды:\n/status - статус датчиков\n/guard_on - охрана ВКЛ\n/guard_off - охрана ВЫКЛ\n/alarm_on - тревога ВКЛ\n/alarm_off - тревога ВЫКЛ\n/rainbow - радуга")
+        elif text == "/status":
+            send_telegram(f"📊 Статус:\n🌡️ Темп: {state['temp']}°C\n💧 Влаж: {state['hum']}%\n🔥 Газ: {state['gas']}\n🚰 Вода: {'ЕСТЬ' if state['water'] else 'НЕТ'}\n📏 Расст: {state['distance']} см\n🛡️ Охрана: {'ВКЛ' if state['guard'] else 'ВЫКЛ'}")
+        elif text == "/guard_on":
+            state["guard"] = True
+            send_telegram("🛡️ Охрана включена!")
+        elif text == "/guard_off":
+            state["guard"] = False
+            state["alarm"] = False
+            state["buzzer"] = 0
+            send_telegram("🛡️ Охрана выключена!")
+        elif text == "/alarm_on":
+            state["alarm"] = True
+            state["buzzer"] = 1
+            send_telegram("🚨 Тревога включена!")
+        elif text == "/alarm_off":
+            state["alarm"] = False
+            state["buzzer"] = 0
+            send_telegram("🚨 Тревога выключена!")
+        elif text == "/rainbow":
+            state["rgb"] = [255, 0, 255]
+            send_telegram("🌈 Радуга включена!")
+        else:
+            send_telegram("Не понял команду. Напиши /start для списка команд.")
+    
+    return "", 200
+
 @app.route('/health')
 def health():
     return "OK"
@@ -149,11 +197,6 @@ def health():
 @app.route('/log')
 def get_log():
     return jsonify(log)
-
-@app.route('/test_telegram')
-def test_telegram():
-    send_telegram("✅ Тест: связь с Telegram работает!")
-    return "Sent"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
