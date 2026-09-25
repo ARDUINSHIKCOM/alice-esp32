@@ -1,7 +1,19 @@
 from flask import Flask, request, jsonify
 from datetime import datetime
+import requests
 
 app = Flask(__name__)
+
+# ===== TELEGRAM =====
+BOT_TOKEN = "8934033344:AAG1ugT8wbAHI7nawdeDgtcYuMPmcOHbxdA"
+CHAT_ID = "7018112801"
+
+def send_telegram(text):
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url, json={"chat_id": CHAT_ID, "text": text}, timeout=5)
+    except Exception as e:
+        print("Telegram error:", e)
 
 # ===== ХРАНИЛИЩЕ =====
 state = {
@@ -23,25 +35,31 @@ def add_log(event_type, value):
     if len(log) > MAX_LOG:
         log.pop(0)
 
-# ===== ESP32 =====
 @app.route('/esp32/set', methods=['POST'])
 def esp32_set():
     data = request.json
     for k in ["gas","gas_d","water","sound","temp","hum","distance"]:
         if k in data: state[k] = data[k]
     
+    # Проверка событий и отправка в Telegram
     if data.get("gas", 0) > 2000:
         add_log("Утечка газа", data["gas"])
+        send_telegram(f"⚠️ УТЕЧКА ГАЗА! Уровень: {data['gas']}")
     if data.get("water", 0) == 1:
         add_log("Протечка воды", 100)
+        send_telegram("⚠️ ПРОТЕЧКА ВОДЫ!")
     if data.get("temp", 0) > 30:
         add_log("Высокая температура", data["temp"])
+        send_telegram(f"🌡️ Высокая температура: {data['temp']}°C")
     if data.get("hum", 0) > 80:
         add_log("Высокая влажность", data["hum"])
+        send_telegram(f"💧 Высокая влажность: {data['hum']}%")
     if data.get("sound", 0) > 2000:
         add_log("Громкий звук", data["sound"])
-    if data.get("distance", 999) < 50:
+        send_telegram(f"🔊 Громкий звук: {data['sound']}")
+    if data.get("distance", 999) < 50 and data.get("distance", 0) > 0:
         add_log("Объект рядом", data["distance"])
+        send_telegram(f"👁️ Объект рядом: {data['distance']} см")
     
     return jsonify({"ok": True})
 
@@ -55,11 +73,11 @@ def esp32_get():
         "guard": state["guard"]
     })
 
-# ===== АЛИСА =====
 @app.route('/alice', methods=['POST'])
 def alice():
     data = request.json
     cmd = data.get('request', {}).get('command', '').lower()
+    has_data = state["temp"] != 0 or state["hum"] != 0 or state["gas"] != 0
     
     if "что произошло" in cmd or "что случилось" in cmd:
         if log:
@@ -70,13 +88,13 @@ def alice():
     elif "протечка" in cmd or "вода" in cmd:
         text = "Протечка есть!" if state["water"] else "Протечки нет."
     elif "газ" in cmd:
-        text = f"Уровень газа: {state['gas']}"
+        text = f"Уровень газа: {state['gas']}" if has_data else "Датчик газа не передаёт данные."
     elif "температура" in cmd:
-        text = f"Температура {state['temp']} градусов, влажность {state['hum']} процентов."
+        text = f"Температура {state['temp']} градусов, влажность {state['hum']} процентов." if has_data else "Датчик температуры пока не передаёт данные."
     elif "влажность" in cmd:
-        text = f"Влажность {state['hum']} процентов."
+        text = f"Влажность {state['hum']} процентов." if has_data else "Датчик влажности пока не передаёт данные."
     elif "расстояние" in cmd:
-        text = f"Расстояние {state['distance']} сантиметров."
+        text = f"Расстояние {state['distance']} сантиметров." if has_data else "Датчик расстояния не передаёт данные."
     elif "включи охрану" in cmd or "включи охран" in cmd:
         state["guard"] = True
         text = "Охрана включена. Поднесите ключ."
@@ -114,8 +132,10 @@ def alice():
     elif "закрой дверь" in cmd:
         state["servo"] = 0
         text = "Дверь закрыта."
+    elif "помощь" in cmd or "что ты умеешь" in cmd:
+        text = "Я умею: спрашивать температуру, влажность, газ, протечку, расстояние. Включать и выключать охрану и тревогу. Управлять цветом и дверью."
     else:
-        text = "Не поняла команду."
+        text = "Не поняла команду. Скажите: что произошло, какая температура, есть протечка."
     
     return jsonify({
         "response": {"text": text, "tts": text, "end_session": False},
@@ -129,6 +149,11 @@ def health():
 @app.route('/log')
 def get_log():
     return jsonify(log)
+
+@app.route('/test_telegram')
+def test_telegram():
+    send_telegram("✅ Тест: связь с Telegram работает!")
+    return "Sent"
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
