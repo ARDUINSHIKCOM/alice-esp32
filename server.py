@@ -241,9 +241,9 @@ def webhook():
         if current_user and users.get(current_user, {}).get("role") == "admin":
             pending_action = "scan_barcode"
             send_telegram("Введите штрих-код.")
-    else:
-        send_back_menu()
-    return "", 200
+        else:
+            send_back_menu()
+        return "", 200
 
     if pending_action == "scan_barcode":
         if text in barcodes:
