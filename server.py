@@ -237,11 +237,10 @@ def webhook():
         return "", 200
 
     # ===== ПРИНЯТЬ БЕНЗИН =====
-    # ===== ПРИНЯТЬ БЕНЗИН =====
-if text == "Принять бензин":
-    if current_user and users.get(current_user, {}).get("role") == "admin":
-        pending_action = "scan_barcode"
-        send_telegram("Введите штрих-код.")
+    if text == "Принять бензин":
+        if current_user and users.get(current_user, {}).get("role") == "admin":
+            pending_action = "scan_barcode"
+            send_telegram("Введите штрих-код.")
     else:
         send_back_menu()
     return "", 200
